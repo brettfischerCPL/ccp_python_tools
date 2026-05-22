@@ -1,4 +1,4 @@
-*! rf_bgincome.ado  v14
+*! rf_bgincome.ado  v15
 *! Random Forest prediction of census block group income from individual-level data.
 *!
 *! Syntax:
@@ -20,7 +20,7 @@
 *! Memory optimisation:
 *!   - compress downcasts all variables to smallest storage type before save
 *!   - Full dataset saved to Parquet, then Stata memory is cleared entirely
-*!     so Python has the machine's full RAM minus only the Parquet read
+*!     so Python has the machine's full RAM available during rf.fit
 *!   - After Python exits, Stata reloads from the same Parquet file
 *!
 *! gtools is used throughout for speed.
@@ -377,19 +377,27 @@ program define rf_bgincome
     }
 
     // -------------------------------------------------------------------------
-    // 9. BUILD FILE PATHS
+    // 9. BUILD FILE PATHS (using absolute paths for reliability)
     // -------------------------------------------------------------------------
     local driver_dir = substr("`driver'", 1, strrpos("`driver'", "/"))
-    if "`driver_dir'" == "" local driver_dir "./"
+    if "`driver_dir'" == "" {
+        local driver_dir = substr("`driver'", 1, strrpos("`driver'", "\"))
+    }
+    if "`driver_dir'" == "" {
+        local driver_dir "`c(pwd)'/"
+    }
 
     local extract_path "`driver_dir'_rf_extract_tmp.parquet"
     local pred_path    "`driver_dir'_rf_predictions_tmp.parquet"
+
+    di as result "  Extract path               : `extract_path'"
+    di as result "  Predictions path           : `pred_path'"
 
     // -------------------------------------------------------------------------
     // 10. COMPRESS, SAVE TO PARQUET, CLEAR STATA MEMORY
     //
     //     compress downcasts all variables to smallest storage type.
-    //     pq save writes the full dataset (all rows, all variables) to Parquet.
+    //     pq save writes the full dataset to Parquet.
     //     clear frees Stata's entire dataset from RAM so Python has the
     //     machine's full memory available during rf.fit.
     //     After Python exits, Stata reloads from the same Parquet file.
@@ -397,8 +405,16 @@ program define rf_bgincome
     di as result "  Compressing dataset ..."
     quietly compress
 
-    di as result "  Saving dataset as Parquet  : `extract_path'"
+    di as result "  Saving dataset as Parquet ..."
     quietly pq save "`extract_path'", replace
+
+    // Verify the file was created
+    capture confirm file "`extract_path'"
+    if _rc != 0 {
+        di as error "ERROR: Parquet file not created at: `extract_path'"
+        exit 601
+    }
+    di as result "  Parquet file confirmed     : `extract_path'"
 
     di as result "  Clearing Stata memory (freeing RAM for Python) ..."
     clear
