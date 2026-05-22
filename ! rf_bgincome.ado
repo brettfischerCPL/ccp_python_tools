@@ -1,4 +1,4 @@
-*! rf_bgincome.ado  v12
+*! rf_bgincome.ado  v14
 *! Random Forest prediction of census block group income from individual-level data.
 *!
 *! Syntax:
@@ -8,38 +8,29 @@
 *!                                  [ntrees(#)]
 *!
 *! Hyperparameter logic:
-*!   - maxfeatures() and/or minleaf() specified : use those values directly,
-*!     regardless of whether tune is also specified
+*!   - maxfeatures() and/or minleaf() specified : use those values directly
 *!   - tune specified, no manual hyperparameters : tune via RandomizedSearchCV
 *!   - neither specified                         : use defaults
-*!     (max_features = sqrt(n_features)/n_features, min_samples_leaf = 5)
 *!
 *!   - ntrees() always overrides the default of 500 trees when specified.
-*!     ntrees() is independent of the tuning logic — tuning only covers
-*!     max_features and min_samples_leaf.
 *!
-*! Workflow:
-*!   1. Stata reads the driver file, validates covariates, marks touse,
-*!      imputes missing values, and assigns the holdout sample.
-*!   2. Stata saves the full dataset as a .dta file via native -save-.
-*!   3. Stata executes rf_bgincome.py, which reads only the needed columns
-*!      from the .dta via pyreadstat usecols, fits the RF, and writes a
-*!      small predictions Parquet file (idvars + predictions only).
-*!   4. Stata loads the predictions Parquet into a temporary frame via
-*!      -pq use- and merges the prediction column(s) into the master dataset
-*!      via -frlink-/-frget-.
+*! All dummy expansion and imputation for categorical variables is done in Stata.
+*! Python receives only numeric, fully-imputed columns.
 *!
-*! gtools is used throughout for speed:
-*!   -gduplicates-  replaces -duplicates-
-*!   -gegen-        replaces -egen-
-*!   -glevelsof-    replaces -levelsof-
-*!   -hashsort-     replaces -sort- and -bysort- where applicable
+*! Memory optimisation:
+*!   - compress downcasts all variables to smallest storage type before save
+*!   - Full dataset saved to Parquet, then Stata memory is cleared entirely
+*!     so Python has the machine's full RAM minus only the Parquet read
+*!   - After Python exits, Stata reloads from the same Parquet file
+*!
+*! gtools is used throughout for speed.
 *!
 *! Requirements:
 *!   - Stata 16+ with Python integration enabled
 *!   - Stata user-written commands: gtools, pq
-*!   - Python packages: pandas, numpy, scikit-learn, joblib, pyarrow, pyreadstat
+*!   - Python packages: numpy, scikit-learn, joblib, pyarrow, pandas (minimal)
 *!   - rf_bgincome.py must exist in the directory specified by pydir()
+*!   - rf_bgincome_tune.py must exist in pydir() if tune option is used
 
 capture program drop rf_bgincome
 program define rf_bgincome
@@ -90,7 +81,6 @@ program define rf_bgincome
         }
     }
 
-    // Warn if only one of maxfeatures/minleaf is specified
     if (`maxfeatures' != -1 & `minleaf' == -1) | ///
        (`maxfeatures' == -1 & `minleaf' != -1) {
         di as text "Note: only one of maxfeatures()/minleaf() specified. " ///
@@ -102,7 +92,6 @@ program define rf_bgincome
     local do_log  = ("`logoutcome'" == "logoutcome")
     local hp_manual = (`maxfeatures' != -1 | `minleaf' != -1)
 
-    // Report hyperparameter mode
     if `hp_manual' {
         di as result "  Hyperparameter mode        : manual"
         if `maxfeatures' != -1 {
@@ -129,7 +118,6 @@ program define rf_bgincome
         di as result "  Hyperparameter mode        : default"
     }
 
-    // Report tree count
     if `ntrees' != -1 {
         di as result "  Number of trees            : `ntrees'"
     }
@@ -266,10 +254,14 @@ program define rf_bgincome
     }
 
     // -------------------------------------------------------------------------
-    // 7. IMPUTE MISSING VALUES AND CREATE MISSING-FLAG DUMMIES
+    // 7. IMPUTE MISSING VALUES, CREATE MISSING-FLAG DUMMIES, AND
+    //    EXPAND CATEGORICALS TO INDICATOR DUMMIES (ALL IN STATA)
+    //
+    //    After this step, rf_features contains ONLY numeric, fully-imputed
+    //    columns: continuous variables, imputed tempvars, missing-flag
+    //    dummies, and expanded categorical indicator dummies.
     // -------------------------------------------------------------------------
     local rf_features  ""
-    local cat_vars_imp ""
 
     foreach v of local covariates {
 
@@ -281,33 +273,38 @@ program define rf_bgincome
         quietly count if `touse' & missing(`v')
         local n_miss = r(N)
 
-        if `n_miss' == 0 {
+        if `n_miss' == 0 & `is_cat' == 0 {
+            // Continuous, no missings: use directly
             local rf_features "`rf_features' `v'"
-            if `is_cat' local cat_vars_imp "`cat_vars_imp' `v'"
         }
-        else {
+        else if `n_miss' == 0 & `is_cat' == 1 {
+            // Categorical, no missings: expand to dummies
+            quietly glevelsof `v' if `touse', local(cat_levels)
+            local first_level = 1
+            foreach lev of local cat_levels {
+                if `first_level' {
+                    local first_level = 0
+                }
+                else {
+                    tempvar d_`v'_`lev'
+                    quietly gen byte `d_`v'_`lev'' = ///
+                        (`v' == `lev') if `touse'
+                    quietly replace `d_`v'_`lev'' = 0 ///
+                        if `touse' & missing(`d_`v'_`lev'')
+                    local rf_features "`rf_features' `d_`v'_`lev''"
+                }
+            }
+        }
+        else if `is_cat' == 0 {
+            // Continuous with missings: impute to median + missing flag
             tempvar imp_v
             quietly gen double `imp_v' = `v' if `touse'
 
-            if `is_cat' == 0 {
-                tempvar med_v
-                quietly gegen double `med_v' = pctile(`v') ///
-                    if `touse' & !missing(`yvar'), p(50)
-                quietly replace `imp_v' = `med_v' if `touse' & missing(`imp_v')
-                drop `med_v'
-            }
-            else {
-                tempvar freq_tmp maxfreq_tmp
-                quietly gegen long `freq_tmp' = count(`v') ///
-                    if `touse' & !missing(`v') & !missing(`yvar'), by(`v')
-                quietly gegen long `maxfreq_tmp' = max(`freq_tmp')
-                quietly glevelsof `v' ///
-                    if `freq_tmp' == `maxfreq_tmp' & !missing(`v'), ///
-                    local(mode_vals)
-                quietly replace `imp_v' = `=word("`mode_vals'", 1)' ///
-                    if `touse' & missing(`imp_v')
-                local cat_vars_imp "`cat_vars_imp' `imp_v'"
-            }
+            tempvar med_v
+            quietly gegen double `med_v' = pctile(`v') ///
+                if `touse' & !missing(`yvar'), p(50)
+            quietly replace `imp_v' = `med_v' if `touse' & missing(`imp_v')
+            drop `med_v'
 
             local rf_features "`rf_features' `imp_v'"
 
@@ -315,13 +312,49 @@ program define rf_bgincome
             quietly gen byte `mflag_v' = (`touse' & missing(`v'))
             local rf_features "`rf_features' `mflag_v'"
         }
+        else {
+            // Categorical with missings: impute to mode, then expand
+            tempvar imp_v
+            quietly gen double `imp_v' = `v' if `touse'
+
+            tempvar freq_tmp maxfreq_tmp
+            quietly gegen long `freq_tmp' = count(`v') ///
+                if `touse' & !missing(`v') & !missing(`yvar'), by(`v')
+            quietly gegen long `maxfreq_tmp' = max(`freq_tmp')
+            quietly glevelsof `v' ///
+                if `freq_tmp' == `maxfreq_tmp' & !missing(`v'), ///
+                local(mode_vals)
+            quietly replace `imp_v' = `=word("`mode_vals'", 1)' ///
+                if `touse' & missing(`imp_v')
+
+            // Missing flag
+            tempvar mflag_v
+            quietly gen byte `mflag_v' = (`touse' & missing(`v'))
+            local rf_features "`rf_features' `mflag_v'"
+
+            // Expand imputed categorical to dummies
+            quietly glevelsof `imp_v' if `touse', local(cat_levels)
+            local first_level = 1
+            foreach lev of local cat_levels {
+                if `first_level' {
+                    local first_level = 0
+                }
+                else {
+                    tempvar d_`v'_`lev'
+                    quietly gen byte `d_`v'_`lev'' = ///
+                        (`imp_v' == `lev') if `touse'
+                    quietly replace `d_`v'_`lev'' = 0 ///
+                        if `touse' & missing(`d_`v'_`lev'')
+                    local rf_features "`rf_features' `d_`v'_`lev''"
+                }
+            }
+        }
     }
 
     local rf_features  = strtrim("`rf_features'")
-    local cat_vars_imp = strtrim("`cat_vars_imp'")
     local n_feat_total = wordcount("`rf_features'")
 
-    di as result "  Total features             : `n_feat_total'"
+    di as result "  Total features (after expansion) : `n_feat_total'"
 
     // -------------------------------------------------------------------------
     // 8. HOLDOUT SAMPLE ASSIGNMENT
@@ -349,14 +382,26 @@ program define rf_bgincome
     local driver_dir = substr("`driver'", 1, strrpos("`driver'", "/"))
     if "`driver_dir'" == "" local driver_dir "./"
 
-    local extract_path "`driver_dir'_rf_extract_tmp.dta"
+    local extract_path "`driver_dir'_rf_extract_tmp.parquet"
     local pred_path    "`driver_dir'_rf_predictions_tmp.parquet"
 
     // -------------------------------------------------------------------------
-    // 10. SAVE FULL DATASET AS .DTA
+    // 10. COMPRESS, SAVE TO PARQUET, CLEAR STATA MEMORY
+    //
+    //     compress downcasts all variables to smallest storage type.
+    //     pq save writes the full dataset (all rows, all variables) to Parquet.
+    //     clear frees Stata's entire dataset from RAM so Python has the
+    //     machine's full memory available during rf.fit.
+    //     After Python exits, Stata reloads from the same Parquet file.
     // -------------------------------------------------------------------------
-    di as result "  Saving dataset as .dta     : `extract_path'"
-    quietly save "`extract_path'", replace
+    di as result "  Compressing dataset ..."
+    quietly compress
+
+    di as result "  Saving dataset as Parquet  : `extract_path'"
+    quietly pq save "`extract_path'", replace
+
+    di as result "  Clearing Stata memory (freeing RAM for Python) ..."
+    clear
 
     // -------------------------------------------------------------------------
     // 11. BUILD USECOLS LIST AND PASS PARAMETERS TO PYTHON
@@ -379,7 +424,6 @@ program define rf_bgincome
     global rf_leavout_var   "`=cond(`leavout'!=0,"sample_leavout","")'"
     global rf_covariates    "`rf_features'"
     global rf_covar_labels  "`rf_features'"
-    global rf_cat_vars      "`cat_vars_imp'"
     global rf_do_tune       "`do_tune'"
     global rf_do_log        "`do_log'"
     global rf_idvars        "`idvars'"
@@ -396,15 +440,17 @@ program define rf_bgincome
     python script "`pypath_main'"
 
     macro drop rf_yvar rf_predvar rf_predvar_level rf_leavout rf_leavout_var ///
-               rf_covariates rf_covar_labels rf_cat_vars rf_do_tune rf_do_log ///
-               rf_idvars rf_usecols rf_touse rf_extract_path rf_pred_path     ///
+               rf_covariates rf_covar_labels rf_do_tune rf_do_log           ///
+               rf_idvars rf_usecols rf_touse rf_extract_path rf_pred_path   ///
                rf_hp_manual rf_maxfeatures rf_minleaf rf_ntrees
 
+    // -------------------------------------------------------------------------
+    // 12. RELOAD DATASET FROM PARQUET AND MERGE PREDICTIONS
+    // -------------------------------------------------------------------------
+    di as result "  Reloading dataset from Parquet ..."
+    pq use "`extract_path'", clear
     capture erase "`extract_path'"
 
-    // -------------------------------------------------------------------------
-    // 12. MERGE PREDICTIONS ONTO IN-MEMORY DATASET
-    // -------------------------------------------------------------------------
     di as result "  Merging predictions ..."
 
     capture frame drop _rf_pred_frame
