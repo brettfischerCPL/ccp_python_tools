@@ -47,7 +47,7 @@ import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 
 META_KEY = b"stata"
 TD_OFFSET = 3653                 # days from 01jan1960 to 01jan1970

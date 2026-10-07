@@ -1,4 +1,4 @@
-*! version 1.0.0  07oct2026
+*! version 1.0.1  07oct2026
 *! pqsetup: check (and if needed install) the Python packages used by pqsave/pquse
 /*
 Syntax
@@ -134,9 +134,11 @@ def _pq_exe():
 
 
 def _pq_import():
-    """Import pqtools.py from the ado-path (reloading it if its version changed)."""
+    """Put pqtools.py's folder on sys.path and (re)load it into sys.modules.
+    Stata runs each ado-file's Python in that ado-file's own namespace, so
+    pqsave/pquse must still -import pqtools- themselves; sys.path and
+    sys.modules are shared, which makes that import instant."""
     import importlib, os, sys
-    import __main__
     from sfi import Macro
     d = os.path.dirname(os.path.abspath(Macro.getLocal("pq_py")))
     if d not in sys.path:
@@ -144,6 +146,5 @@ def _pq_import():
     import pqtools
     want = Macro.getLocal("pq_ver")
     if want and pqtools.__version__ != want:
-        pqtools = importlib.reload(pqtools)
-    __main__.pqtools = pqtools
+        importlib.reload(pqtools)
 end

@@ -1,4 +1,4 @@
-*! version 1.0.0  30sep2026
+*! version 1.0.1  30sep2026
 *! pqsave: write Stata data to Parquet via Python/pyarrow (engine: pqtools.py)
 /*
 Syntax
@@ -37,7 +37,7 @@ program define pqsave, rclass
         COMPression(string) LEVel(integer -999) CHUNKsize(integer 0)        ///
         TMPdir(string) NOMETA NODATES DELIMiter(string) VIAStata VERbose ]
 
-    local pq_ver "1.0.0"
+    local pq_ver "1.0.1"
 
     // ------------------------------------------------------------ source
     local mode "memory"
@@ -207,7 +207,7 @@ program define pqsave, rclass
     local pq_nodates "`nodates'"
     local pq_verbose "`verbose'"
     local pq_rc 1
-    capture noisily python: pqtools.stata_save()
+    capture noisily python: import pqtools; pqtools.stata_save()
     local rc = _rc
     if `made_tmp' capture erase `"`tmpf'"'
     if `rc' exit `rc'

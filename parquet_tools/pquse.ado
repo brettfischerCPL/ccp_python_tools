@@ -1,4 +1,4 @@
-*! version 1.0.0  30sep2026
+*! version 1.0.1  30sep2026
 *! pquse: load a Parquet file into Stata via Python/pyarrow (engine: pqtools.py)
 /*
 Syntax
@@ -31,7 +31,7 @@ program define pquse, rclass
         DIRectory(string) CLEAR COLumns(string asis) ROWS(integer 0)        ///
         CHUNKsize(integer 0) TMPdir(string) NOMETA VERbose ]
 
-    local pq_ver "1.0.0"
+    local pq_ver "1.0.1"
     local fname `fname'
 
     if `"`directory'"' != "" {
@@ -65,7 +65,7 @@ program define pquse, rclass
     local pq_nometa "`nometa'"
     local pq_verbose "`verbose'"
     local pq_rc 1
-    capture noisily python: pqtools.stata_load()
+    capture noisily python: import pqtools; pqtools.stata_load()
     local rc = _rc
     if `rc' | "`pq_rc'" != "0" {
         capture erase `"`tmpf'"'
