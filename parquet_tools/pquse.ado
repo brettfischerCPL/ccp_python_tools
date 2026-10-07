@@ -52,7 +52,7 @@ program define pquse, rclass
     if c(changed) & "`clear'" == "" error 4
     if `"`tmpdir'"' == "" local tmpdir `"`c(tmpdir)'"'
 
-    _pq_python_init `pq_ver'
+    pqsetup, version(`pq_ver') quiet
 
     tempfile tmpf
     mata: st_local("tmpf", pathjoin(st_local("tmpdir"), pathbasename(st_local("tmpf")) + ".dta"))
@@ -87,21 +87,3 @@ program define pquse, rclass
     return local filename `"`infile'"'
 end
 
-
-program define _pq_python_init
-    args ver
-    capture findfile pqtools.py
-    if _rc {
-        di as err "pqtools.py not found on the ado-path; install it next to pquse.ado"
-        exit 601
-    }
-    local pq_py `"`r(fn)'"'
-    local pq_ver "`ver'"
-    capture python: import pyarrow
-    if _rc {
-        di as err "Python could not import pyarrow. Check -python query- and that"
-        di as err "pyarrow is installed for the Python set with -python set exec-."
-        exit 198
-    }
-    python: import sys, os, importlib; from sfi import Macro as _pqM; _pqd = os.path.dirname(os.path.abspath(_pqM.getLocal("pq_py"))); (_pqd in sys.path) or sys.path.insert(0, _pqd); import pqtools; pqtools = pqtools if pqtools.__version__ == _pqM.getLocal("pq_ver") else importlib.reload(pqtools)
-end

@@ -1,6 +1,7 @@
 {smcl}
 {* *! version 1.0.0  06oct2026}{...}
 {vieweralsosee "pqsave" "help pqsave"}{...}
+{vieweralsosee "pqsetup" "help pqsetup"}{...}
 {vieweralsosee "[D] use" "help use"}{...}
 {vieweralsosee "[P] PyStata integration" "help python"}{...}
 {viewerjumpto "Syntax" "pquse##syntax"}{...}
@@ -73,8 +74,9 @@ other sources (R, Python, DuckDB, Spark, and so on) are also supported; see
 {it:{help pquse##foreign:Files not written by pqsave}}.
 
 {pstd}
-{cmd:pquse} requires Stata 16 or newer, a Python installation set with
-{helpb python:python set exec}, and the Python package {cmd:pyarrow}.
+{cmd:pquse} requires Stata 16 or newer and a Python installation set with
+{helpb python:python set exec}. The Python packages it needs are installed
+automatically if missing; see {helpb pqsetup}.
 
 
 {marker options}{...}
@@ -265,5 +267,5 @@ the secure server.{p_end}
 {title:Also see}
 
 {psee}
-Help: {helpb pqsave}, {helpb use}, {helpb python}
+Help: {helpb pqsave}, {helpb pqsetup}, {helpb use}, {helpb python}
 {p_end}

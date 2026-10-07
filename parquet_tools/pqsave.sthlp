@@ -1,6 +1,7 @@
 {smcl}
 {* *! version 1.0.0  06oct2026}{...}
 {vieweralsosee "pquse" "help pquse"}{...}
+{vieweralsosee "pqsetup" "help pqsetup"}{...}
 {vieweralsosee "[D] save" "help save"}{...}
 {vieweralsosee "[P] PyStata integration" "help python"}{...}
 {viewerjumpto "Syntax" "pqsave##syntax"}{...}
@@ -93,8 +94,9 @@ characteristics, the dataset label, and the sort order are stored in the file
 and restored by {helpb pquse}. Programs other than {cmd:pquse} ignore them.
 
 {pstd}
-{cmd:pqsave} requires Stata 16 or newer, a Python installation set with
-{helpb python:python set exec}, and the Python package {cmd:pyarrow}.
+{cmd:pqsave} requires Stata 16 or newer and a Python installation set with
+{helpb python:python set exec}. The Python packages it needs are installed
+automatically if missing; see {helpb pqsetup}.
 
 
 {marker options}{...}
@@ -276,12 +278,16 @@ dataset; rows are filtered while converting.{p_end}
 {title:Installation}
 
 {pstd}
-Place {cmd:pqsave.ado}, {cmd:pquse.ado}, {cmd:pqtools.py}, and their help files
-in the same directory on the {help adopath:ado-path}. {cmd:pqtools.py} contains
-the Python code for both commands. Check the Python setup with
+Place {cmd:pqsave.ado}, {cmd:pquse.ado}, {cmd:pqsetup.ado}, {cmd:pqtools.py},
+and their help files in the same directory on the {help adopath:ado-path}.
+{cmd:pqtools.py} contains the Python code for both commands.
 
-{phang2}{cmd:. python query}{p_end}
-{phang2}{cmd:. python: import pyarrow; print(pyarrow.__version__)}{p_end}
+{pstd}
+The first time {cmd:pqsave} or {cmd:pquse} runs in a session, {helpb pqsetup}
+checks that Python has recent enough versions of {cmd:numpy} and {cmd:pyarrow}.
+Missing or outdated packages are installed with {cmd:pip} from the offline
+package folder {cmd:S:/python/packages}, without internet access. See
+{helpb pqsetup} to check versions or use a different folder.
 
 {pstd}
 If you change {cmd:pqtools.py} during a Stata session, also change its version
@@ -340,5 +346,5 @@ the secure server.{p_end}
 {title:Also see}
 
 {psee}
-Help: {helpb pquse}, {helpb save}, {helpb python}
+Help: {helpb pquse}, {helpb pqsetup}, {helpb save}, {helpb python}
 {p_end}
